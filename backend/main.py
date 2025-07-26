@@ -1,48 +1,46 @@
-from fastapi import FastAPI, Query
-import pandas as pd
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
+import os
 
 app = FastAPI()
 
-# Allow CORS for frontend
+# ✅ CORS to allow React frontend to access the backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # For production: replace "*" with specific domain
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load data
-inventory = pd.read_csv("backend/ecommerce_dataset/inventory_items.csv")
-order_items = pd.read_csv("backend/ecommerce_dataset/order_items.csv")
-orders = pd.read_csv("backend/ecommerce_dataset/orders.csv")
-products = pd.read_csv("backend/ecommerce_dataset/products.csv")
+# ✅ Load CSVs from ecommerce_dataset folder
+DATA_DIR = os.path.join(os.path.dirname(__file__), "ecommerce_dataset")
 
-@app.get("/")
-def read_root():
-    return {"message": "Chatbot Backend API Working!"}
+orders_df = pd.read_csv(os.path.join(DATA_DIR, "orders.csv"))
+products_df = pd.read_csv(os.path.join(DATA_DIR, "products.csv"))
+inventory_df = pd.read_csv(os.path.join(DATA_DIR, "inventory_items.csv"))
+users_df = pd.read_csv(os.path.join(DATA_DIR, "users.csv"))
 
-@app.get("/top-products")
-def get_top_sold_products():
-    top = order_items["product_id"].value_counts().head(5)
-    top_products = products[products["id"].isin(top.index)][["name", "brand"]]
-    return top_products.to_dict(orient="records")
+# ✅ Helper function to handle chatbot prompts
+def process_query(query: str) -> str:
+    query = query.lower()
 
-@app.get("/order-status")
-def get_order_status(order_id: int = Query(...)):
-    order = orders[orders["order_id"] == order_id]
-    if order.empty:
-        return {"error": "Order ID not found"}
-    return {
-        "order_id": int(order_id),
-        "status": order["status"].values[0],
-        "shipped_at": order["shipped_at"].values[0],
-        "delivered_at": order["delivered_at"].values[0],
-        "returned_at": order["returned_at"].values[0]
-    }
+    if "order status" in query:
+        return "To check order status, please provide your Order ID."
+    elif "available" in query or "stock" in query:
+        product = "shirt"  # <- Example: this should be parsed from query
+        stock = inventory_df[inventory_df["product_id"] == 1]["available_quantity"].values
+        return f"We currently have {stock[0]} units of {product} in stock." if stock.size > 0 else "Sorry, item not in stock."
+    elif "product" in query or "details" in query:
+        return str(products_df.head(3).to_dict(orient="records"))
+    else:
+        return "Sorry, I didn't understand that. Can you rephrase?"
 
-@app.get("/inventory-check")
-def get_inventory(product_name: str = Query(...)):
-    inv = inventory[inventory["product_name"].str.lower() == product_name.lower()]
-    available = inv[inv["sold_at"].isnull()]
-    return {"product": product_name, "available_stock": len(available)}
+# ✅ API Endpoint
+@app.post("/chat")
+async def chat(request: Request):
+    body = await request.json()
+    user_query = body.get("message", "")
+    bot_response = process_query(user_query)
+    return {"response": bot_response}
